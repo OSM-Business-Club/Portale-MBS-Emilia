@@ -3978,6 +3978,7 @@
         </div>
         <div id="stat-fat-riepilogo"></div>
         <div id="stat-fat-riepilogo-mesi"></div>
+        <div id="stat-fat-progressivo"></div>
       </div>
 
       <!-- ===== UTILI ===== -->
@@ -8286,7 +8287,7 @@ function saveStatMese(tipo, nomeAz, anno, mese, valore) {
   renderFiltroAnni(tipo, nomeAz);      // aggiorna checkbox (potrebbe apparire un anno nuovo)
   disegnaGraficoStat(tipo, nomeAz);
   renderRiepilogoAnni(tipo, nomeAz);   // aggiorna tabella riepilogo in tempo reale
-  if (tipo === 'fatturato') renderRiepilogoMensile(nomeAz); // aggiorna confronto mensile
+  if (tipo === 'fatturato') { renderRiepilogoMensile(nomeAz); renderProgressivoMensile(nomeAz); } // aggiorna confronto mensile e progressivo
   // Aggiorna alert nella sezione iscritti
   const alertEl = document.getElementById('stat-fatturato-alert');
   if (alertEl) alertEl.style.display = hasCaloFatturatoBimensile() ? '' : 'none';
@@ -8883,6 +8884,71 @@ function renderRiepilogoMensile(nomeAz) {
   div.innerHTML = html;
 }
 
+/**
+ * Tabella fatturato progressivo (da inizio anno) mese per mese:
+ * totale cumulato anno selezionato vs anno precedente fino allo stesso mese, con variazione %.
+ * I mesi senza dato contano come 0 nel progressivo.
+ */
+function renderProgressivoMensile(nomeAz) {
+  var div = document.getElementById('stat-fat-progressivo');
+  if (!div) return;
+
+  var annoSel  = parseInt(statAnnoSelezionato);
+  var annoPrev = annoSel - 1;
+  var mesiSel  = getStatMesi('fatturato', nomeAz, annoSel);
+  var mesiPrev = getStatMesi('fatturato', nomeAz, annoPrev);
+
+  // Ultimo mese con almeno un dato in uno dei due anni
+  var ultimo = -1;
+  for (var u = 0; u < 12; u++) {
+    if (mesiSel[u] !== null || mesiPrev[u] !== null) ultimo = u;
+  }
+  if (ultimo < 0) { div.innerHTML = ''; return; }
+
+  function fmtEurPieno(v) {
+    return '&#8364;&nbsp;' + Math.round(v).toLocaleString('it-IT');
+  }
+  var nd = '<span class="stat-riepilogo-nd">—</span>';
+
+  var html = '<div class="stat-riepilogo-wrap" style="margin-top:16px;">';
+  html += '<div class="stat-riepilogo-title">&#128202;&nbsp;Fatturato progressivo da inizio anno &mdash; ' + annoSel + ' vs ' + annoPrev + '</div>';
+  html += '<div style="overflow-x:auto;">';
+  html += '<table class="stat-riepilogo-table" style="min-width:520px;">';
+  html += '<thead><tr>';
+  html += '<th>Fino a</th>';
+  html += '<th style="text-align:right;">Progressivo ' + annoSel + '</th>';
+  html += '<th style="text-align:right;">Progressivo ' + annoPrev + '</th>';
+  html += '<th style="text-align:right;">Variazione %</th>';
+  html += '</tr></thead><tbody>';
+
+  var cumSel = 0, cumPrev = 0;
+  for (var m = 0; m <= ultimo; m++) {
+    cumSel  += mesiSel[m]  || 0;
+    cumPrev += mesiPrev[m] || 0;
+    var hasSelM = mesiSel[m] !== null;
+
+    var pctHtml;
+    if (hasSelM && cumPrev > 0) {
+      var inc  = ((cumSel - cumPrev) / cumPrev) * 100;
+      var sign = inc >= 0 ? '+' : '';
+      var cls  = inc >= 0 ? 'positivo' : 'negativo';
+      pctHtml = '<span class="stat-incremento-val ' + cls + '" style="font-size:0.86rem;">' + sign + inc.toFixed(1) + '%</span>';
+    } else {
+      pctHtml = nd;
+    }
+
+    html += '<tr>';
+    html += '<td class="stat-riepilogo-anno">' + MESI_NOMI_FULL[m] + '</td>';
+    html += '<td class="stat-riepilogo-tot">' + (hasSelM ? fmtEurPieno(cumSel) : nd) + '</td>';
+    html += '<td class="stat-riepilogo-tot" style="opacity:0.7;">' + (cumPrev > 0 ? fmtEurPieno(cumPrev) : nd) + '</td>';
+    html += '<td class="stat-riepilogo-incr">' + pctHtml + '</td>';
+    html += '</tr>';
+  }
+
+  html += '</tbody></table></div></div>';
+  div.innerHTML = html;
+}
+
 /** Aggiorna labels, input, filtri, grafici e riepilogo per l'azienda e l'anno correntemente selezionati */
 function _aggiornaContenutoStatistiche(nomeAz) {
   renderStatInputs('fatturato', nomeAz);
@@ -8897,6 +8963,7 @@ function _aggiornaContenutoStatistiche(nomeAz) {
   renderRiepilogoAnni('fatturato', nomeAz);
   renderRiepilogoAnni('utili', nomeAz);
   renderRiepilogoMensile(nomeAz);
+  renderProgressivoMensile(nomeAz);
 }
 
 /** Restituisce l'elenco di tutti i nomi azienda unici dallo state.partners */
