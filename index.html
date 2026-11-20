@@ -9865,6 +9865,21 @@ function _downloadFallback(blob, filename) {
     var gratuiti = tipi.filter(function(t) { return TIPI_GRATUITI.indexOf(String(t || '').toLowerCase()) >= 0; });
     return gratuiti.length === tipi.length ? (gratuiti[0] || '') : '';
   }
+  // Diplomato (2026-11-20): paga una quota ridotta.
+  // tutti=true → basta che sia Diplomato in una qualsiasi giornata (serve per la quota standard);
+  // altrimenti conta solo nelle giornate in cui era presente (serve per la nota in Fatturazione).
+  function isDiplomato(i, tutti) {
+    var tipi = [];
+    if (PROGETTO === 'MBS Emilia') {
+      if (tutti || i.presenzaG1) tipi.push(i.tipoG1 || i.tipo);
+      if (tutti || i.presenzaG2) tipi.push(i.tipoG2 || i.tipo);
+    }
+    if (!tipi.length) tipi.push(i.tipo);
+    return tipi.some(function(t) { return String(t || '').toLowerCase() === 'diplomato'; });
+  }
+  function notaTipo(i) {
+    return tipoGratuito(i) || (isDiplomato(i) ? 'Diplomato' : '');
+  }
   function quotaDi(i) {
     if (tipoGratuito(i)) return 0;
     if (typeof getQuotaEffettiva === 'function') return Number(getQuotaEffettiva(i)) || 0;
@@ -9979,7 +9994,7 @@ function _downloadFallback(blob, filename) {
         azienda: i.azienda || '',
         consulente: i.consulente || '',
         partner: i.partner || '',
-        gratuito: tipoGratuito(i),
+        nota: notaTipo(i),
         quota: quotaDi(i)
       };
     });
@@ -10036,7 +10051,7 @@ function _downloadFallback(blob, filename) {
           '<td>' + esc(r.azienda || '—') + '</td>' +
           '<td>' + esc(r.consulente || '—') + '</td>' +
           '<td>' + esc(r.partner || '—') + '</td>' +
-          '<td class="num">' + eur(r.quota) + (r.gratuito ? '<span class="fatt-tipo">' + esc(r.gratuito) + '</span>' : '') + '</td></tr>';
+          '<td class="num">' + eur(r.quota) + (r.nota ? '<span class="fatt-tipo">' + esc(r.nota) + '</span>' : '') + '</td></tr>';
       });
       html += '</tbody><tfoot><tr>' +
           '<td colspan="5">Totale &middot; ' + righe.length + ' present' + (righe.length === 1 ? 'e' : 'i') + '</td>' +
@@ -10108,7 +10123,7 @@ function _downloadFallback(blob, filename) {
     var tot = 0;
     righe.forEach(function(r) {
       tot += r.quota;
-      linee.push([r.nome, r.azienda, r.consulente, r.partner, r.quota.toFixed(2).replace('.', ','), r.gratuito].map(q).join(';'));
+      linee.push([r.nome, r.azienda, r.consulente, r.partner, r.quota.toFixed(2).replace('.', ','), r.nota].map(q).join(';'));
     });
     linee.push(['Totale', '', '', '', tot.toFixed(2).replace('.', ','), ''].map(q).join(';'));
     var blob = new Blob(['﻿' + linee.join('\r\n')], { type: 'text/csv;charset=utf-8' });
@@ -10194,6 +10209,86 @@ function _downloadFallback(blob, filename) {
     }
     save();
   };
+
+  // ---------- Quota standard Diplomati (2026-11-20) ----------
+  // Si imposta in Home sotto le Regole Sconto. Quando in Iscritti un cliente diventa "Diplomato",
+  // la sua quota diventa quella standard (poi resta modificabile a mano).
+  // Se torna a un altro tipo e la quota era ancora quella standard, torna al calcolo automatico.
+  function quotaStdDiplomati() {
+    var v = state.quotaDiplomati;
+    if (v === undefined || v === null || v === '') return null;
+    var n = parseFloat(v);
+    return isNaN(n) ? null : n;
+  }
+
+  var _rifSconto = document.getElementById('regole-sconto-container');
+  var _detSconto = _rifSconto && _rifSconto.closest('details');
+  if (_detSconto && !document.getElementById('quota-diplomati-input')) {
+    var sumRif = _detSconto.querySelector('summary');
+    var boxRif = sumRif ? sumRif.nextElementSibling : null;
+    var det = document.createElement('details');
+    det.id = 'quota-diplomati-box';
+    det.style.cssText = _detSconto.style.cssText;
+    det.innerHTML =
+      '<summary style="' + esc(sumRif ? sumRif.style.cssText : '') + '">' +
+        '<span style="color:var(--bf-acc);">&#127891;</span> Quota standard Diplomati' +
+      '</summary>' +
+      '<div style="' + esc(boxRif ? boxRif.style.cssText : '') + '">' +
+        '<p style="font-size:0.8rem;color:var(--testo-muted);margin-bottom:14px;">' +
+          'Quando in Iscritti scegli il tipo <b>Diplomato</b>, la quota del cliente diventa questa. Puoi sempre cambiarla a mano sulla singola riga.<br>' +
+          'Lascia vuoto se non vuoi una quota standard. Le quote già inserite non vengono toccate.' +
+        '</p>' +
+        '<div style="display:flex;gap:8px;align-items:center;">' +
+          '<span style="font-size:0.9rem;color:var(--testo-muted);">€</span>' +
+          '<input type="number" id="quota-diplomati-input" min="0" step="50" placeholder="Es. 400" ' +
+            'style="width:140px;background:var(--input-bg);border:1px solid var(--input-border);color:var(--testo-chiaro);padding:8px 12px;border-radius:7px;font-size:0.85rem;outline:none;" ' +
+            'onchange="salvaQuotaDiplomati(this.value)">' +
+        '</div>' +
+      '</div>';
+    _detSconto.parentNode.insertBefore(det, _detSconto.nextSibling);
+    det.addEventListener('toggle', function() {
+      var inp = document.getElementById('quota-diplomati-input');
+      if (inp && det.open) { var s = quotaStdDiplomati(); inp.value = s === null ? '' : s; }
+    });
+  }
+
+  window.salvaQuotaDiplomati = function(val) {
+    var v = String(val == null ? '' : val).trim();
+    if (v === '') { delete state.quotaDiplomati; }
+    else {
+      var n = parseFloat(v);
+      if (isNaN(n) || n < 0) { if (typeof toast === 'function') toast('Inserisci un importo valido'); return; }
+      state.quotaDiplomati = n;
+    }
+    save();
+    if (typeof toast === 'function') toast(v === '' ? 'Quota standard Diplomati rimossa' : 'Quota standard Diplomati: ' + eur(state.quotaDiplomati));
+  };
+
+  var _updIscPrima = window.updateIscritto;
+  if (typeof _updIscPrima === 'function') {
+    window.updateIscritto = function(gi, field, val) {
+      var isc = state.iscritti && state.iscritti[gi];
+      var campoTipo = field === 'tipo' || field === 'tipoG1' || field === 'tipoG2';
+      var era = (isc && campoTipo) ? isDiplomato(isc, true) : false;
+      var res = _updIscPrima.apply(this, arguments);
+      if (!isc || !campoTipo) return res;
+      var ora = isDiplomato(isc, true);
+      var std = quotaStdDiplomati();
+      if (std === null || era === ora) return res;
+      if (ora) {
+        isc.quota = std;
+        if (typeof toast === 'function') toast('Diplomato: quota impostata a ' + eur(std));
+      } else if (parseFloat(isc.quota) === std) {
+        delete isc.quota;
+        if (typeof toast === 'function') toast('Non più Diplomato: quota tornata automatica');
+      } else {
+        return res;
+      }
+      save();
+      if (typeof renderIscritti === 'function') renderIscritti();
+      return res;
+    };
+  }
 })();
 </script>
 <!-- ===== FINE MODULO COMUNE FATTURAZIONE ===== -->
